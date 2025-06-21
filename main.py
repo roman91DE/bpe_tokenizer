@@ -1,6 +1,7 @@
 import pathlib
-from collections import Counter, defaultdict
+from collections import defaultdict
 import logging
+from typing import Any
 from tqdm import tqdm
 
 
@@ -29,7 +30,7 @@ def _get_word_boundary_tokens(text: str) -> list[str]:
     """
     tokens = []
     for word in text.strip().split():
-        tokens.append('▁')
+        tokens.append("▁")
         tokens.extend(list(word))
     return tokens
 
@@ -44,91 +45,20 @@ def _get_frequency_table(tokens: list[str]) -> list[tuple[str, int]]:
     return sorted(frequency_table.items(), key=lambda item: item[1], reverse=True)
 
 
-def _find_pair(tokens: list[str]) -> tuple[str, int]:
-    """
-    Finds the most frequent adjacent pair in the token list.
-    Returns ("", 0) if no pairs exist.
-    """
-    pairs = [fst + scnd for fst, scnd in zip(tokens, tokens[1:])]
-    if not pairs:
-        return ("", 0)
-    c = Counter(pairs)
-    return c.most_common(1)[0]
-
-
-def _find_pair_word(tokens: list[str]) -> tuple[str, int]:
-    """
-    Finds the most frequent adjacent pair in the token list, but does not merge across word boundaries (▁).
-    Returns ("", 0) if no pairs exist.
-    """
-    pairs = []
-    for i in range(len(tokens) - 1):
-        # Do not merge across word boundaries
-        if tokens[i].startswith('▁') and i != 0:
-            continue
-        if tokens[i+1].startswith('▁'):
-            continue
-        pairs.append(tokens[i] + tokens[i+1])
-    if not pairs:
-        return ("", 0)
-    c = Counter(pairs)
-    return c.most_common(1)[0]
-
-
-def _get_pairs(tokens):
+def _get_pairs(tokens) -> dict[Any, Any]:
     """Return a dict mapping each pair to a set of indices where it occurs."""
     pairs = {}
     for i in range(len(tokens) - 1):
-        pair = (tokens[i], tokens[i+1])
+        pair = (tokens[i], tokens[i + 1])
         if pair not in pairs:
             pairs[pair] = set()
         pairs[pair].add(i)
     return pairs
 
 
-def _bpe_fast(tokens: list[str], k: int, mode: str) -> list[str]:
-    """
-    Fast BPE implementation using pair location tracking.
-    tokens: list of strings (converted to tuples internally for merging).
-    """
-    # Internally, tokens become list[tuple[str, ...]]
-    tokens_tuple = [(t,) for t in tokens]
-    total_steps = k
-    step = 0
-    while step < total_steps:
-        pairs = _get_pairs(tokens_tuple)
-        if not pairs:
-            break
-        # Find the most frequent pair (skip across word boundaries in 'w' mode)
-        if mode == 'w':
-            filtered_pairs = {pair: idxs for pair, idxs in pairs.items()
-                              if not (pair[0][0].startswith('▁') and pair[1][0].startswith('▁')) and not pair[1][0].startswith('▁')}
-            if not filtered_pairs:
-                break
-            best_pair = max(filtered_pairs.items(), key=lambda x: len(x[1]))[0]
-            best_count = len(filtered_pairs[best_pair])
-        else:
-            best_pair = max(pairs.items(), key=lambda x: len(x[1]))[0]
-            best_count = len(pairs[best_pair])
-        if best_count < 2:
-            break
-        # Merge all occurrences of best_pair
-        i = 0
-        new_tokens = []
-        while i < len(tokens_tuple):
-            if i < len(tokens_tuple) - 1 and (tokens_tuple[i], tokens_tuple[i+1]) == best_pair:
-                new_tokens.append(tokens_tuple[i] + tokens_tuple[i+1])
-                i += 2
-            else:
-                new_tokens.append(tokens_tuple[i])
-                i += 1
-        tokens_tuple = new_tokens
-        step += 1
-    # Flatten tokens back to strings
-    return [''.join(t) for t in tokens_tuple]
-
-
-def bpe(text: str, k: int, mode: str = "c", normalize: bool = False) -> tuple[list[tuple[str, int]], list[str]]:
+def bpe(
+    text: str, k: int, mode: str = "c", normalize: bool = False
+) -> tuple[list[tuple[str, int]], list[str]]:
     """
     Applies Byte Pair Encoding (BPE) to the input text for k steps.
     mode: 'c' for char-level, 'w' for word-boundary-aware BPE.
@@ -145,14 +75,22 @@ def bpe(text: str, k: int, mode: str = "c", normalize: bool = False) -> tuple[li
     total_steps = k
     tokens_tuple = [(t,) for t in tokens]
     step = 0
-    with tqdm(total=total_steps//100 + (1 if total_steps % 100 else 0), desc="BPE Steps", unit="100 steps") as pbar:
+    with tqdm(
+        total=total_steps // 100 + (1 if total_steps % 100 else 0),
+        desc="BPE Steps",
+        unit="100 steps",
+    ) as pbar:
         while step < total_steps:
             pairs = _get_pairs(tokens_tuple)
             if not pairs:
                 break
-            if mode == 'w':
-                filtered_pairs = {pair: idxs for pair, idxs in pairs.items()
-                                  if not (pair[0][0].startswith('▁') and pair[1][0].startswith('▁')) and not pair[1][0].startswith('▁')}
+            if mode == "w":
+                filtered_pairs = {
+                    pair: idxs
+                    for pair, idxs in pairs.items()
+                    if not (pair[0][0].startswith("▁") and pair[1][0].startswith("▁"))
+                    and not pair[1][0].startswith("▁")
+                }
                 if not filtered_pairs:
                     break
                 best_pair = max(filtered_pairs.items(), key=lambda x: len(x[1]))[0]
@@ -165,8 +103,11 @@ def bpe(text: str, k: int, mode: str = "c", normalize: bool = False) -> tuple[li
             i = 0
             new_tokens = []
             while i < len(tokens_tuple):
-                if i < len(tokens_tuple) - 1 and (tokens_tuple[i], tokens_tuple[i+1]) == best_pair:
-                    new_tokens.append(tokens_tuple[i] + tokens_tuple[i+1])
+                if (
+                    i < len(tokens_tuple) - 1
+                    and (tokens_tuple[i], tokens_tuple[i + 1]) == best_pair
+                ):
+                    new_tokens.append(tokens_tuple[i] + tokens_tuple[i + 1])
                     i += 2
                 else:
                     new_tokens.append(tokens_tuple[i])
@@ -175,6 +116,30 @@ def bpe(text: str, k: int, mode: str = "c", normalize: bool = False) -> tuple[li
             step += 1
             if step % 100 == 0 or step == total_steps:
                 pbar.update(1)
-    tokens = [''.join(t) for t in tokens_tuple]
+    tokens = ["".join(t) for t in tokens_tuple]
     freq_table = _get_frequency_table(tokens)
     return (freq_table, tokens)
+
+
+def write_output(
+    dir: pathlib.Path, freq_table: list[tuple[str, int]], tokens: list[str]
+) -> None:
+    """
+    Writes the frequency table and tokens to files in the specified directory.
+    """
+    if dir.exists():
+        logging.warning(f"Directory {dir} already exists. Overwriting files.")
+
+    dir.mkdir(parents=True, exist_ok=True)
+    freq_file = dir / "freq_table.txt"
+    tokens_file = dir / "tokens.txt"
+
+    with open(freq_file, "w", encoding="utf-8") as f:
+        for token, freq in freq_table:
+            f.write(f"{token}\t{freq}\n")
+
+    with open(tokens_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(tokens))
+
+    logging.info(f"Frequency table written to {freq_file}")
+    logging.info(f"Tokens written to {tokens_file}")
