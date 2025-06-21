@@ -75,48 +75,57 @@ def _find_pair_word(tokens: list[str]) -> tuple[str, int]:
     return c.most_common(1)[0]
 
 
-def _bpe_step(tokens: list[str]) -> tuple[bool, list[str]]:
-    """
-    Performs one BPE merge step. Returns (False, tokens) if no merge is possible.
-    """
-    pair, count = _find_pair(tokens)
-    if count <= 1:
-        return False, tokens
+def _get_pairs(tokens):
+    """Return a dict mapping each pair to a set of indices where it occurs."""
+    pairs = {}
+    for i in range(len(tokens) - 1):
+        pair = (tokens[i], tokens[i+1])
+        if pair not in pairs:
+            pairs[pair] = set()
+        pairs[pair].add(i)
+    return pairs
 
-    new_tokens = []
-    i = 0
-    while i < len(tokens):
-        if i < len(tokens) - 1 and tokens[i] + tokens[i + 1] == pair:
-            new_tokens.append(pair)
-            i += 2
+
+def _bpe_fast(tokens: list[str], k: int, mode: str) -> list[str]:
+    """
+    Fast BPE implementation using pair location tracking.
+    tokens: list of strings (converted to tuples internally for merging).
+    """
+    # Internally, tokens become list[tuple[str, ...]]
+    tokens_tuple = [(t,) for t in tokens]
+    total_steps = k
+    step = 0
+    while step < total_steps:
+        pairs = _get_pairs(tokens_tuple)
+        if not pairs:
+            break
+        # Find the most frequent pair (skip across word boundaries in 'w' mode)
+        if mode == 'w':
+            filtered_pairs = {pair: idxs for pair, idxs in pairs.items()
+                              if not (pair[0][0].startswith('▁') and pair[1][0].startswith('▁')) and not pair[1][0].startswith('▁')}
+            if not filtered_pairs:
+                break
+            best_pair = max(filtered_pairs.items(), key=lambda x: len(x[1]))[0]
+            best_count = len(filtered_pairs[best_pair])
         else:
-            new_tokens.append(tokens[i])
-            i += 1
-    return True, new_tokens
-
-
-def _bpe_step_word(tokens: list[str]) -> tuple[bool, list[str]]:
-    """
-    Performs one BPE merge step for word-boundary-aware tokens.
-    """
-    pair, count = _find_pair_word(tokens)
-    if count <= 1:
-        return False, tokens
-    new_tokens = []
-    i = 0
-    while i < len(tokens):
-        if (
-            i < len(tokens) - 1
-            and not tokens[i+1].startswith('▁')
-            and not tokens[i].startswith('▁')
-            and tokens[i] + tokens[i+1] == pair
-        ):
-            new_tokens.append(pair)
-            i += 2
-        else:
-            new_tokens.append(tokens[i])
-            i += 1
-    return True, new_tokens
+            best_pair = max(pairs.items(), key=lambda x: len(x[1]))[0]
+            best_count = len(pairs[best_pair])
+        if best_count < 2:
+            break
+        # Merge all occurrences of best_pair
+        i = 0
+        new_tokens = []
+        while i < len(tokens_tuple):
+            if i < len(tokens_tuple) - 1 and (tokens_tuple[i], tokens_tuple[i+1]) == best_pair:
+                new_tokens.append(tokens_tuple[i] + tokens_tuple[i+1])
+                i += 2
+            else:
+                new_tokens.append(tokens_tuple[i])
+                i += 1
+        tokens_tuple = new_tokens
+        step += 1
+    # Flatten tokens back to strings
+    return [''.join(t) for t in tokens_tuple]
 
 
 def bpe(text: str, k: int, mode: str = "c", normalize: bool = False) -> tuple[list[tuple[str, int]], list[str]]:
@@ -125,23 +134,47 @@ def bpe(text: str, k: int, mode: str = "c", normalize: bool = False) -> tuple[li
     mode: 'c' for char-level, 'w' for word-boundary-aware BPE.
     normalize: if True, lowercases the input text before processing.
     Returns the frequency table and the final list of tokens.
+    Shows a progress bar, updating every 100 steps.
     """
     if normalize:
         text = text.lower()
     if mode == "w":
         tokens = _get_word_boundary_tokens(text)
-        bpe_step = _bpe_step_word
     else:
         tokens = _get_chars(text)
-        bpe_step = _bpe_step
-
-    for i in tqdm(range(k), desc="BPE Steps"):
-        logging.info(f"BPE-Iteration {i}")
-        ok, tokens = bpe_step(tokens)
-        if not ok:
-            logging.warning(f"Tokenizer stopped early after {i + 1} BPE-Steps")
-            break
-
+    total_steps = k
+    tokens_tuple = [(t,) for t in tokens]
+    step = 0
+    with tqdm(total=total_steps//100 + (1 if total_steps % 100 else 0), desc="BPE Steps", unit="100 steps") as pbar:
+        while step < total_steps:
+            pairs = _get_pairs(tokens_tuple)
+            if not pairs:
+                break
+            if mode == 'w':
+                filtered_pairs = {pair: idxs for pair, idxs in pairs.items()
+                                  if not (pair[0][0].startswith('▁') and pair[1][0].startswith('▁')) and not pair[1][0].startswith('▁')}
+                if not filtered_pairs:
+                    break
+                best_pair = max(filtered_pairs.items(), key=lambda x: len(x[1]))[0]
+                best_count = len(filtered_pairs[best_pair])
+            else:
+                best_pair = max(pairs.items(), key=lambda x: len(x[1]))[0]
+                best_count = len(pairs[best_pair])
+            if best_count < 2:
+                break
+            i = 0
+            new_tokens = []
+            while i < len(tokens_tuple):
+                if i < len(tokens_tuple) - 1 and (tokens_tuple[i], tokens_tuple[i+1]) == best_pair:
+                    new_tokens.append(tokens_tuple[i] + tokens_tuple[i+1])
+                    i += 2
+                else:
+                    new_tokens.append(tokens_tuple[i])
+                    i += 1
+            tokens_tuple = new_tokens
+            step += 1
+            if step % 100 == 0 or step == total_steps:
+                pbar.update(1)
+    tokens = [''.join(t) for t in tokens_tuple]
     freq_table = _get_frequency_table(tokens)
-
     return (freq_table, tokens)
