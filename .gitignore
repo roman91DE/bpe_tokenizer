@@ -5,7 +5,11 @@ build/
 dist/
 wheels/
 *.egg-info
+.ruff_cache
 
 # Virtual environments
 .venv
 corpora/bible.txt
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
