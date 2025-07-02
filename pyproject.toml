@@ -9,5 +9,6 @@ dependencies = [
     "nbconvert>=7.16.6",
     "notebook>=7.4.3",
     "ruff>=0.12.0",
+    "tiktoken>=0.9.0",
     "tqdm>=4.67.1",
 ]
